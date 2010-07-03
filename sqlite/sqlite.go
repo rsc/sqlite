@@ -97,6 +97,13 @@ var errText = map[Errno]string {
 	101: "sqlite3_step() has finished executing",
 }
 
+func (c *Conn) error(rv C.int) os.Error {
+	if rv == 21 {	// misuse
+		return Errno(rv)
+	}
+	return os.NewError(Errno(rv).String() + ": " + C.GoString(C.sqlite3_errmsg(c.db)))
+}
+
 type Conn struct {
 	db *C.sqlite3
 }
@@ -120,6 +127,7 @@ func (c *Conn) Exec(cmd string, args ...interface{}) os.Error {
 	if err != nil {
 		return err
 	}
+	defer s.Finalize()
 	err = s.Exec(args)
 	if err != nil {
 		return err
@@ -145,7 +153,7 @@ func (c *Conn) Prepare(cmd string) (*Stmt, os.Error) {
 	var tail *C.char
 	rv := C.sqlite3_prepare_v2(c.db, cmdstr, C.int(len(cmd)+1), &stmt, &tail)
 	if rv != 0 {
-		return nil, Errno(rv)
+		return nil, c.error(rv)
 	}
 	return &Stmt{c: c, stmt: stmt}, nil
 }
@@ -153,12 +161,12 @@ func (c *Conn) Prepare(cmd string) (*Stmt, os.Error) {
 func (s *Stmt) Exec(args ...interface{}) os.Error {
 	rv := C.sqlite3_reset(s.stmt)
 	if rv != 0 {
-		return Errno(rv)
+		return s.c.error(rv)
 	}
 
 	n := int(C.sqlite3_bind_parameter_count(s.stmt))
 	if n != len(args) {
-		return os.NewError("incorrect argument count")
+		return os.NewError(fmt.Sprintf("incorrect argument count: have %d want %d", len(args), n))
 	}
 
 	for i, v := range args {
@@ -169,7 +177,7 @@ func (s *Stmt) Exec(args ...interface{}) os.Error {
 				p = &v[0]
 			}
 			if rv := C.my_bind_blob(s.stmt, C.int(i+1), unsafe.Pointer(p), C.int(len(v))); rv != 0 {
-				return Errno(rv)
+				return s.c.error(rv)
 			}
 			continue
 		}
@@ -178,7 +186,7 @@ func (s *Stmt) Exec(args ...interface{}) os.Error {
 		rv := C.my_bind_text(s.stmt, C.int(i+1), cstr, C.int(len(str)))
 		C.free(unsafe.Pointer(cstr))
 		if rv != 0 {
-			return Errno(rv)
+			return s.c.error(rv)
 		}
 	}
 	return nil
@@ -195,7 +203,7 @@ func (s *Stmt) Next() bool {
 		return true
 	}
 	if err != Done {
-		s.err = err
+		s.err = s.c.error(rv)
 	}
 	return false		
 }
@@ -224,19 +232,19 @@ func (s *Stmt) Scan(args ...interface{}) os.Error {
 		case *int:
 			x, err := strconv.Atoi(string(data))
 			if err != nil {
-				return err
+				return os.NewError("arg " + strconv.Itoa(i) + " as int: " + err.String())
 			}
 			*v = x
 		case *int64:
 			x, err := strconv.Atoi64(string(data))
 			if err != nil {
-				return err
+				return os.NewError("arg " + strconv.Itoa(i) + " as int64: " + err.String())
 			}
 			*v = x
 		case *float64:
 			x, err := strconv.Atof64(string(data))
 			if err != nil {
-				return err
+				return os.NewError("arg " + strconv.Itoa(i) + " as float64: " + err.String())
 			}
 			*v = x
 		default:
@@ -249,7 +257,7 @@ func (s *Stmt) Scan(args ...interface{}) os.Error {
 func (s *Stmt) Finalize() os.Error {
 	rv := C.sqlite3_finalize(s.stmt)
 	if rv != 0 {
-		return Errno(rv)
+		return s.c.error(rv)
 	}
 	return nil
 }
@@ -257,7 +265,7 @@ func (s *Stmt) Finalize() os.Error {
 func (c *Conn) Close() os.Error {
 	rv := C.sqlite3_close(c.db)
 	if rv != 0 {
-		return Errno(rv)
+		return c.error(rv)
 	}
 	return nil
 }
