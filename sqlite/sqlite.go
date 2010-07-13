@@ -170,6 +170,7 @@ func (s *Stmt) Exec(args ...interface{}) os.Error {
 	}
 
 	for i, v := range args {
+		var str string
 		switch v := v.(type) {
 		case []byte:
 			var p *byte
@@ -180,8 +181,18 @@ func (s *Stmt) Exec(args ...interface{}) os.Error {
 				return s.c.error(rv)
 			}
 			continue
+		
+		case bool:
+			if v {
+				str = "1"
+			} else {
+				str = "0"
+			}
+
+		default:
+			str = fmt.Sprint(v)
 		}
-		str := fmt.Sprint(v)
+		
 		cstr := C.CString(str)
 		rv := C.my_bind_text(s.stmt, C.int(i+1), cstr, C.int(len(str)))
 		C.free(unsafe.Pointer(cstr))
@@ -229,6 +240,8 @@ func (s *Stmt) Scan(args ...interface{}) os.Error {
 			*v = data
 		case *string:
 			*v = string(data)
+		case *bool:
+			*v = string(data) == "1"
 		case *int:
 			x, err := strconv.Atoi(string(data))
 			if err != nil {
