@@ -108,6 +108,11 @@ type Conn struct {
 	db *C.sqlite3
 }
 
+func Version() string {
+	p := C.sqlite3_libversion();
+	return C.GoString(p);
+}
+
 func Open(filename string) (*Conn, os.Error) {
 	var db *C.sqlite3
 	name := C.CString(filename)
