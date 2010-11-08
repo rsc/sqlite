@@ -9,6 +9,14 @@ package sqlite
 #include <sqlite3.h>
 #include <stdlib.h>
 
+// These wrappers are necessary because SQLITE_TRANSIENT
+// is a pointer constant, and cgo doesn't translate them correctly.
+// The definition in sqlite3.h is:
+//
+// typedef void (*sqlite3_destructor_type)(void*);
+// #define SQLITE_STATIC      ((sqlite3_destructor_type)0)
+// #define SQLITE_TRANSIENT   ((sqlite3_destructor_type)-1)
+
 static int my_bind_text(sqlite3_stmt *stmt, int n, char *p, int np) {
 	return sqlite3_bind_text(stmt, n, p, np, SQLITE_TRANSIENT);
 }
@@ -25,6 +33,7 @@ import (
 	"reflect"
 	"strconv"
 	"unsafe"
+	"time"
 )
 
 type Errno int
@@ -98,6 +107,9 @@ var errText = map[Errno]string {
 }
 
 func (c *Conn) error(rv C.int) os.Error {
+	if c == nil || c.db == nil {
+		return os.NewError("nil sqlite database")
+	}
 	if rv == 21 {	// misuse
 		return Errno(rv)
 	}
@@ -114,10 +126,18 @@ func Version() string {
 }
 
 func Open(filename string) (*Conn, os.Error) {
+	if C.sqlite3_threadsafe() == 0 {
+		return nil, os.NewError("sqlite library was not compiled for thread-safe operation")
+	}
+
 	var db *C.sqlite3
 	name := C.CString(filename)
 	defer C.free(unsafe.Pointer(name))
-	rv := C.sqlite3_open(name, &db)
+	rv := C.sqlite3_open_v2(name, &db,
+		C.SQLITE_OPEN_FULLMUTEX |
+		C.SQLITE_OPEN_READWRITE |
+		C.SQLITE_OPEN_CREATE,
+		nil)
 	if rv != 0 {
 		return nil, Errno(rv)
 	}
@@ -138,9 +158,8 @@ func (c *Conn) Exec(cmd string, args ...interface{}) os.Error {
 		return err
 	}
 	rv := C.sqlite3_step(s.stmt)
-	errno := Errno(rv)
-	if errno != Done {
-		return errno
+	if Errno(rv) != Done {
+		return c.error(rv)
 	}
 	return nil
 }
@@ -149,9 +168,15 @@ type Stmt struct {
 	c *Conn
 	stmt *C.sqlite3_stmt
 	err os.Error
+	t0 int64
+	sql string
+	args string
 }
 
 func (c *Conn) Prepare(cmd string) (*Stmt, os.Error) {
+	if c == nil || c.db == nil {
+		return nil, os.NewError("nil sqlite database")
+	}
 	cmdstr := C.CString(cmd)
 	defer C.free(unsafe.Pointer(cmdstr))
 	var stmt *C.sqlite3_stmt
@@ -160,10 +185,11 @@ func (c *Conn) Prepare(cmd string) (*Stmt, os.Error) {
 	if rv != 0 {
 		return nil, c.error(rv)
 	}
-	return &Stmt{c: c, stmt: stmt}, nil
+	return &Stmt{c: c, stmt: stmt, sql: cmd, t0: time.Nanoseconds()}, nil
 }
 
 func (s *Stmt) Exec(args ...interface{}) os.Error {
+	s.args = fmt.Sprintf(" %v", []interface{}(args))
 	rv := C.sqlite3_reset(s.stmt)
 	if rv != 0 {
 		return s.c.error(rv)
@@ -171,7 +197,7 @@ func (s *Stmt) Exec(args ...interface{}) os.Error {
 
 	n := int(C.sqlite3_bind_parameter_count(s.stmt))
 	if n != len(args) {
-		return os.NewError(fmt.Sprintf("incorrect argument count: have %d want %d", len(args), n))
+		return os.NewError(fmt.Sprintf("incorrect argument count for Stmt.Exec: have %d want %d", len(args), n))
 	}
 
 	for i, v := range args {
@@ -227,7 +253,7 @@ func (s *Stmt) Next() bool {
 func (s *Stmt) Scan(args ...interface{}) os.Error {
 	n := int(C.sqlite3_column_count(s.stmt))
 	if n != len(args) {
-		return os.NewError("incorrect argument count")
+		return os.NewError(fmt.Sprintf("incorrect argument count for Stmt.Scan: have %d want %d", len(args), n))
 	}
 	
 	for i, v := range args {
@@ -272,6 +298,14 @@ func (s *Stmt) Scan(args ...interface{}) os.Error {
 	return nil
 }
 
+func (s *Stmt) SQL() string {
+	return s.sql + s.args
+}
+
+func (s *Stmt) Nanoseconds() int64 {
+	return time.Nanoseconds() - s.t0
+}
+
 func (s *Stmt) Finalize() os.Error {
 	rv := C.sqlite3_finalize(s.stmt)
 	if rv != 0 {
@@ -281,9 +315,13 @@ func (s *Stmt) Finalize() os.Error {
 }
 
 func (c *Conn) Close() os.Error {
+	if c == nil || c.db == nil {
+		return os.NewError("nil sqlite database")
+	}
 	rv := C.sqlite3_close(c.db)
 	if rv != 0 {
 		return c.error(rv)
 	}
+	c.db = nil
 	return nil
 }
