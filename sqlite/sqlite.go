@@ -320,6 +320,11 @@ func (s *Stmt) Next() bool {
 	return false		
 }
 
+func (s *Stmt) Reset() os.Error {
+	C.sqlite3_reset(s.stmt)
+	return nil
+}
+
 func (s *Stmt) Scan(args ...interface{}) os.Error {
 	n := int(C.sqlite3_column_count(s.stmt))
 	if n != len(args) {
