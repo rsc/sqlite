@@ -209,6 +209,14 @@ func (b *Backup) Close() os.Error {
 	return nil
 }
 
+func (c *Conn) BusyTimeout(ms int) os.Error {
+	rv := C.sqlite3_busy_timeout(c.db, C.int(ms))
+	if rv == 0 {
+		return nil
+	}
+	return Errno(rv)
+}
+
 func (c *Conn) Exec(cmd string, args ...interface{}) os.Error {
 	s, err := c.Prepare(cmd)
 	if err != nil {
