@@ -32,11 +32,10 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strconv"
-	"unsafe"
 	"time"
+	"unsafe"
 )
 
 type Errno int
@@ -188,7 +187,7 @@ func (b *Backup) Status() BackupStatus {
 	return BackupStatus{int(C.sqlite3_backup_remaining(b.sb)), int(C.sqlite3_backup_pagecount(b.sb))}
 }
 
-func (b *Backup) Run(npage int, sleepNs int64, c chan<- BackupStatus) error {
+func (b *Backup) Run(npage int, period time.Duration, c chan<- BackupStatus) error {
 	var err error
 	for {
 		err = b.Step(npage)
@@ -198,14 +197,14 @@ func (b *Backup) Run(npage int, sleepNs int64, c chan<- BackupStatus) error {
 		if c != nil {
 			c <- b.Status()
 		}
-		time.Sleep(sleepNs)
+		time.Sleep(period)
 	}
 	return b.dst.error(C.sqlite3_errcode(b.dst.db))
 }
 
 func (b *Backup) Close() error {
 	if b.sb == nil {
-		return os.EINVAL
+		return errors.New("backup already closed")
 	}
 	C.sqlite3_backup_finish(b.sb)
 	b.sb = nil
@@ -241,7 +240,7 @@ type Stmt struct {
 	c    *Conn
 	stmt *C.sqlite3_stmt
 	err  error
-	t0   int64
+	t0   time.Time
 	sql  string
 	args string
 }
@@ -258,7 +257,7 @@ func (c *Conn) Prepare(cmd string) (*Stmt, error) {
 	if rv != 0 {
 		return nil, c.error(rv)
 	}
-	return &Stmt{c: c, stmt: stmt, sql: cmd, t0: time.Nanoseconds()}, nil
+	return &Stmt{c: c, stmt: stmt, sql: cmd, t0: time.Now()}, nil
 }
 
 func (s *Stmt) Exec(args ...interface{}) error {
@@ -358,13 +357,13 @@ func (s *Stmt) Scan(args ...interface{}) error {
 			}
 			*v = x
 		case *int64:
-			x, err := strconv.Atoi64(string(data))
+			x, err := strconv.ParseInt(string(data), 10, 64)
 			if err != nil {
 				return errors.New("arg " + strconv.Itoa(i) + " as int64: " + err.Error())
 			}
 			*v = x
 		case *float64:
-			x, err := strconv.Atof64(string(data))
+			x, err := strconv.ParseFloat(string(data), 64)
 			if err != nil {
 				return errors.New("arg " + strconv.Itoa(i) + " as float64: " + err.Error())
 			}
@@ -381,7 +380,7 @@ func (s *Stmt) SQL() string {
 }
 
 func (s *Stmt) Nanoseconds() int64 {
-	return time.Nanoseconds() - s.t0
+	return time.Now().Sub(s.t0).Nanoseconds()
 }
 
 func (s *Stmt) Finalize() error {
