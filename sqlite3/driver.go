@@ -309,11 +309,11 @@ func (s *stmt) start(args []driver.Value) error {
 			continue
 
 		case bool:
-			var i int64
+			var vi int64
 			if v {
-				i = 1
+				vi = 1
 			}
-			if rv := C.sqlite3_bind_int64(s.stmt, C.int(i+1), C.sqlite3_int64(i)); rv != 0 {
+			if rv := C.sqlite3_bind_int64(s.stmt, C.int(i+1), C.sqlite3_int64(vi)); rv != 0 {
 				return s.c.error(rv)
 			}
 			continue
@@ -347,7 +347,6 @@ func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
 		panic("database/sql/driver: misuse of sqlite driver: Exec with active Rows")
 	}
 
-	defer s.reset()
 	err := s.start(args)
 	if err != nil {
 		return nil, err
@@ -390,14 +389,6 @@ func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
 		}
 	}
 	return &rows{s}, nil
-}
-
-func convertArgs(args []driver.Value) []interface{} {
-	out := make([]interface{}, len(args))
-	for i, arg := range args {
-		out[i] = arg
-	}
-	return out
 }
 
 type rows struct {
