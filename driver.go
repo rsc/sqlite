@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package sqlite3 provides access to the SQLite library, version 3.
+// Package sqlite provides access to the SQLite library, version 3.
 //
 // The package has no exported API.
 // It registers a driver for the standard Go database/sql package.
 //
-//	import _ "code.google.com/p/gosqlite/sqlite3"
-//
-// (For an alternate, earlier API, see the code.google.com/p/gosqlite/sqlite package.)
-package sqlite
+//	import _ "rsc.io/sqlite"
+package sqlite // import "rsc.io/sqlite"
 
 /*
 #cgo LDFLAGS: -lsqlite3
